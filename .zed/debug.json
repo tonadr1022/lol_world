@@ -1,0 +1,16 @@
+// Project-local debug tasks
+//
+// For more documentation on how to configure debug tasks,
+// see: https://zed.dev/docs/debugger
+[
+  {
+    "label": "Build Binary",
+    "adapter": "CodeLLDB",
+    "program": "build/lol_world",
+    "request": "launch",
+    "build": {
+      "command": "jai",
+      "args": ["build.jai", "-very_debug"],
+    },
+  },
+]

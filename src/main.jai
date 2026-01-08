@@ -15,7 +15,7 @@ vk_check :: (result: VkResult) {
     }
 }
 
-init_device :: (app_name: string) {
+load_vulkan_library :: () {
     #if OS != .LINUX {
         print("Unsupported OS\n");
         #assert false;
@@ -34,13 +34,21 @@ init_device :: (app_name: string) {
         exit(1);
     }
     vk_load_global_functions(cast(*void)vkGetInstanceProcAddr);
+}
 
+init_device :: (app_name: string) {
+    #if OS != .LINUX {
+        print("Unsupported OS\n");
+        #assert false;
+    }
+
+    load_vulkan_library();
     app_info := VkApplicationInfo.{
         pApplicationName=to_c_string(app_name),
         applicationVersion=VK_MAKE_VERSION(1, 0, 0),
         pEngineName="no_engine",
         engineVersion=VK_MAKE_VERSION(1, 0, 0),
-        apiVersion=VK_API_VERSION_1_2,
+        apiVersion=VK_API_VERSION_1_4,
     };
 
     inst_info := VkInstanceCreateInfo.{pApplicationInfo=*app_info};
@@ -72,7 +80,7 @@ main :: () {
 }
 
 //#import,file "../modules/volk/bindings.jai";
-#scope_file 
+#scope_file
 
 #import "System";
 #import "POSIX";
