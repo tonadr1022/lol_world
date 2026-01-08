@@ -1,0 +1,3 @@
+[submodule "modules/Vulkan"]
+	path = modules/Vulkan
+	url = https://github.com/tonadr1022/vulkan-jai-binding.git
