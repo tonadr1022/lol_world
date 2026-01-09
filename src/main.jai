@@ -60,18 +60,91 @@ init_device :: (app_name: string) {
     phys_devices: [..]VkPhysicalDevice;
     array_resize(*phys_devices, phys_device_count);
     vk_check(vkEnumeratePhysicalDevices(device.instance, *phys_device_count, phys_devices.data));
+
     selected_phys_device: VkPhysicalDevice;
     best_score := 0;
+    
+    required_extensions :: string.[
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        VK_KHR_SPIRV_1_4_EXTENSION_NAME,
+        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+        VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME
+    ];
+
+    queue_families: [..]VkQueueFamilyProperties;
+    defer array_free(queue_families);
+
+    available_extensions: [..]VkExtensionProperties;
+    defer array_free(available_extensions);
+
     for phys_device: phys_devices {
         props: VkPhysicalDeviceProperties;
         vkGetPhysicalDeviceProperties(phys_device, *props);
-        score := 0;
-        if props.deviceType == .DISCRETE_GPU {
-            score += 1000;
+        
+        if props.apiVersion < VK_API_VERSION_1_4 continue;
+        
+        queue_family_count: u32;
+        vkGetPhysicalDeviceQueueFamilyProperties(phys_device, *queue_family_count, null);
+        array_resize(*queue_families, queue_family_count);
+        vkGetPhysicalDeviceQueueFamilyProperties(phys_device, *queue_family_count, queue_families.data);
+        
+        has_graphics := false;
+        for qfp: queue_families {
+            if qfp.queueFlags & .GRAPHICS {
+                has_graphics = true;
+                break;
+            }
         }
-        score += props.limits.maxImageDimension2D;
+        if !has_graphics continue;
+        
+        ext_count: u32;
+        vkEnumerateDeviceExtensionProperties(phys_device, null, *ext_count, null);
+        array_resize(*available_extensions, ext_count);
+        vkEnumerateDeviceExtensionProperties(phys_device, null, *ext_count, available_extensions.data);
+
+        found_all_extensions := true;
+        for req: required_extensions {
+            found := false;
+            for avail: available_extensions {
+                if to_string(avail.extensionName.data) == req {
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                found_all_extensions = false;
+                break;
+            }
+        }
+        
+        if !found_all_extensions {
+            continue;
+        }
+
+        score := 0;
+
+        if props.deviceType == .DISCRETE_GPU {
+            score += 1;
+        }
+        if score > best_score {
+            best_score = score;
+            selected_phys_device = phys_device;
+        }
     }
 
+    if !selected_phys_device {
+        print("failed to find a suitable GPU!\n");
+        exit(1);
+    }
+
+    device.physical_device = selected_phys_device;
+
+    props: VkPhysicalDeviceProperties;
+    vkGetPhysicalDeviceProperties(device.physical_device, *props);
+
+    device_name := to_string(props.deviceName.data);
+    print("Selected Physical Device: %\n", device_name);
+    print("Device Type: %\n", props.deviceType);
 }
 
 main :: () {

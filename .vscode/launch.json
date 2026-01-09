@@ -1,0 +1,14 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Build Binary",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/lol_world",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "Build Binary"
+        }
+    ]
+}
