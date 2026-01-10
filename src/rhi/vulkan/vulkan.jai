@@ -22,7 +22,7 @@ init_device :: (app_name: string) -> bool {
     };
 
     enabled_layers : [10]*u8;
-    enabled_layer_count: u32 = 0;
+    enabled_layer_count := 0;
     if VALIDATION_LAYERS_ENABLED {
         enabled_layers[enabled_layer_count] = "VK_LAYER_KHRONOS_validation";
         enabled_layer_count += 1;
@@ -33,6 +33,7 @@ init_device :: (app_name: string) -> bool {
     layers : [..]VkLayerProperties;
     array_resize(*layers, available_layer_count);
     vkEnumerateInstanceLayerProperties(*available_layer_count, layers.data);
+
     for i: 0..enabled_layer_count-1 {
         enabled_layer_name := enabled_layers[i];
         found := false;
@@ -48,10 +49,20 @@ init_device :: (app_name: string) -> bool {
         }
     }
 
+    sdl_vulkan_extension_count: u32;
+    SDL_Vulkan_GetInstanceExtensions(*sdl_vulkan_extension_count);
+    assert(sdl_vulkan_extension_count <= 32);
+    sdl_vulkan_extensions := SDL_Vulkan_GetInstanceExtensions(*sdl_vulkan_extension_count);
+    for 0..sdl_vulkan_extension_count-1 {
+        print("SDL Vulkan Extension: %\n", to_string(sdl_vulkan_extensions[it]));
+    }
+
     inst_info := VkInstanceCreateInfo.{
         pApplicationInfo=*app_info,
-        enabledLayerCount=enabled_layer_count,
-        ppEnabledLayerNames=enabled_layers.data
+        enabledLayerCount=xx enabled_layer_count,
+        ppEnabledLayerNames=enabled_layers.data,
+        enabledExtensionCount=sdl_vulkan_extension_count,
+        ppEnabledExtensionNames=sdl_vulkan_extensions,
     };
 
     vk_check(vkCreateInstance(*inst_info, null, *device.instance));
@@ -101,26 +112,25 @@ vk_check :: (result: VkResult) {
     }
 }
 
-load_vulkan_library :: () {
+load_vulkan_library :: () -> bool {
     // TODO: this is incredibly jank.
     #if OS != .LINUX {
         print("Unsupported OS\n");
         #assert false;
     }
-    libvulkan := dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
-    if !libvulkan {
-        libvulkan = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
+    // TODO: unload the library on exit?
+    if !SDL_Vulkan_LoadLibrary("libvulkan.so.1") && !SDL_Vulkan_LoadLibrary("libvulkan.so") {
+        print("Failed to load Vulkan library via SDL: %\n", to_string(SDL_GetError()));
+        return false;
     }
-    if !libvulkan {
-        print("Failed to load Vulkan library\n");
-        exit(1);
-    }
-    vkGetInstanceProcAddr := dlsym(libvulkan, "vkGetInstanceProcAddr");
+    vkGetInstanceProcAddr := SDL_Vulkan_GetVkGetInstanceProcAddr();
+
     if !vkGetInstanceProcAddr {
-        print("Failed to load vkGetInstanceProcAddr\n");
-        exit(1);
+        print(to_string(SDL_GetError()));
+        return true;
     }
     vk_load_global_functions(cast(*void)vkGetInstanceProcAddr);
+    return true;
 }
 
 create_logical_device :: (phys_device: VkPhysicalDevice) -> VkDevice {
@@ -158,9 +168,6 @@ create_logical_device :: (phys_device: VkPhysicalDevice) -> VkDevice {
     queues : []VkDeviceQueueCreateInfo = .[queue_cinfo];
 
     enabled_extensions : []*u8 = .[
-        VK_KHR_SURFACE_EXTENSION_NAME,
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-        VK_KHR_SPIRV_1_4_EXTENSION_NAME,
         VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
     ];
 
@@ -168,10 +175,11 @@ create_logical_device :: (phys_device: VkPhysicalDevice) -> VkDevice {
         queueCreateInfoCount=1,
         pQueueCreateInfos=queues.data,
         ppEnabledExtensionNames=enabled_extensions.data,
-        enabledExtensionCount= 3,
+        enabledExtensionCount=1,
     };
 
     device: VkDevice;
+    print("creating device\n");
     vk_check(vkCreateDevice(phys_device, *cinfo, null, *device));
     print("created device\n");
     return device;
@@ -252,7 +260,7 @@ select_physical_device :: (min_vulkan_api_version: u32, required_device_extensio
     return selected_phys_device;
 }
 
-#scope_file 
+#scope_file
 
 VALIDATION_LAYERS_ENABLED :: true;
 
@@ -260,3 +268,4 @@ VALIDATION_LAYERS_ENABLED :: true;
 #import "Vulkan";
 #import "POSIX";
 #import "Basic";
+#import "SDL";
