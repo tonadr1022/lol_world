@@ -16,6 +16,7 @@ vk_check :: (result: VkResult) {
 }
 
 load_vulkan_library :: () {
+    // TODO: this is incredibly jank.
     #if OS != .LINUX {
         print("Unsupported OS\n");
         #assert false;
@@ -36,7 +37,7 @@ load_vulkan_library :: () {
     vk_load_global_functions(cast(*void)vkGetInstanceProcAddr);
 }
 
-init_device :: (app_name: string) {
+init_vulkan_device :: (app_name: string, min_vulkan_api_version: u32, required_device_extensions: []string) {
     #if OS != .LINUX {
         print("Unsupported OS\n");
         #assert false;
@@ -48,7 +49,7 @@ init_device :: (app_name: string) {
         applicationVersion=VK_MAKE_VERSION(1, 0, 0),
         pEngineName="no_engine",
         engineVersion=VK_MAKE_VERSION(1, 0, 0),
-        apiVersion=VK_API_VERSION_1_4,
+        apiVersion=min_vulkan_api_version,
     };
 
     inst_info := VkInstanceCreateInfo.{pApplicationInfo=*app_info};
@@ -63,13 +64,6 @@ init_device :: (app_name: string) {
 
     selected_phys_device: VkPhysicalDevice;
     best_score := 0;
-    
-    required_extensions :: string.[
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-        VK_KHR_SPIRV_1_4_EXTENSION_NAME,
-        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
-        VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME
-    ];
 
     queue_families: [..]VkQueueFamilyProperties;
     defer array_free(queue_families);
@@ -80,14 +74,14 @@ init_device :: (app_name: string) {
     for phys_device: phys_devices {
         props: VkPhysicalDeviceProperties;
         vkGetPhysicalDeviceProperties(phys_device, *props);
-        
-        if props.apiVersion < VK_API_VERSION_1_4 continue;
-        
+
+        if props.apiVersion < min_vulkan_api_version continue;
+
         queue_family_count: u32;
         vkGetPhysicalDeviceQueueFamilyProperties(phys_device, *queue_family_count, null);
         array_resize(*queue_families, queue_family_count);
         vkGetPhysicalDeviceQueueFamilyProperties(phys_device, *queue_family_count, queue_families.data);
-        
+
         has_graphics := false;
         for qfp: queue_families {
             if qfp.queueFlags & .GRAPHICS {
@@ -96,14 +90,14 @@ init_device :: (app_name: string) {
             }
         }
         if !has_graphics continue;
-        
+
         ext_count: u32;
         vkEnumerateDeviceExtensionProperties(phys_device, null, *ext_count, null);
         array_resize(*available_extensions, ext_count);
         vkEnumerateDeviceExtensionProperties(phys_device, null, *ext_count, available_extensions.data);
 
         found_all_extensions := true;
-        for req: required_extensions {
+        for req: required_device_extensions {
             found := false;
             for avail: available_extensions {
                 if to_string(avail.extensionName.data) == req {
@@ -116,7 +110,7 @@ init_device :: (app_name: string) {
                 break;
             }
         }
-        
+
         if !found_all_extensions {
             continue;
         }
@@ -145,6 +139,16 @@ init_device :: (app_name: string) {
     device_name := to_string(props.deviceName.data);
     print("Selected Physical Device: %\n", device_name);
     print("Device Type: %\n", props.deviceType);
+}
+
+init_device :: (app_name: string) {
+    required_extensions :: string.[
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        VK_KHR_SPIRV_1_4_EXTENSION_NAME,
+        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+        VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME
+    ];
+    init_vulkan_device(app_name, VK_API_VERSION_1_4, required_extensions);
 }
 
 main :: () {
