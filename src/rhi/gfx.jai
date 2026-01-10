@@ -1,5 +1,6 @@
-gfx_init :: (app_name: string) {
-    init_device(app_name);
+gfx_init :: (app_name: string) -> bool {
+    result := init_device(app_name);
+    return result;
 }
 
 #scope_file

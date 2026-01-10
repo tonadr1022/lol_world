@@ -2,7 +2,7 @@
 
 #scope_export
 
-init_device :: (app_name: string) {
+init_device :: (app_name: string) -> bool {
     min_vulkan_api_version := VK_API_VERSION_1_4;
     required_device_extensions :: string.[
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
@@ -21,15 +21,47 @@ init_device :: (app_name: string) {
         apiVersion=min_vulkan_api_version,
     };
 
-    inst_info := VkInstanceCreateInfo.{pApplicationInfo=*app_info};
+    enabled_layers : [10]*u8;
+    enabled_layer_count: u32 = 0;
+    if VALIDATION_LAYERS_ENABLED {
+        enabled_layers[enabled_layer_count] = "VK_LAYER_KHRONOS_validation";
+        enabled_layer_count += 1;
+    }
+
+    available_layer_count: u32;
+    vkEnumerateInstanceLayerProperties(*available_layer_count, null);
+    layers : [..]VkLayerProperties;
+    array_resize(*layers, available_layer_count);
+    vkEnumerateInstanceLayerProperties(*available_layer_count, layers.data);
+    for i: 0..enabled_layer_count-1 {
+        enabled_layer_name := enabled_layers[i];
+        found := false;
+        for layer: layers {
+            if to_string(layer.layerName) == to_string(enabled_layer_name) {
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            print("Vulkan: Validation layer % not available.\n", enabled_layer_name);
+            return false;
+        }
+    }
+
+    inst_info := VkInstanceCreateInfo.{
+        pApplicationInfo=*app_info,
+        enabledLayerCount=enabled_layer_count,
+        ppEnabledLayerNames=enabled_layers.data
+    };
 
     vk_check(vkCreateInstance(*inst_info, null, *device.instance));
     vk_load_instance_functions(device.instance);
 
+
     selected_phys_device := select_physical_device(min_vulkan_api_version, required_device_extensions);
     if !selected_phys_device {
-        print("failed to find a suitable GPU!\n");
-        exit(1);
+        print("failed to find a suitable GPU.\n");
+        return false;
     }
     device.physical_device = selected_phys_device;
 
@@ -39,25 +71,28 @@ init_device :: (app_name: string) {
     device_name := to_string(props.deviceName.data);
     print("Selected Physical Device: %\n", device_name);
     print("Device Type: %\n", props.deviceType);
+
+    create_logical_device_result := create_logical_device(device.physical_device);
+    return true;
 }
 
 #scope_file
 
-VulkanQueue :: struct {
+Queue :: struct {
     queueFamilyIndex: u32;
 }
 
-VulkanDevice :: struct {
+Device :: struct {
     instance: VkInstance;
     physical_device: VkPhysicalDevice;
     device: VkDevice;
 
     MAX_QUEUES :: 1; // only graphics for now
 
-    queues: [MAX_QUEUES]VulkanQueue;
+    queues: [MAX_QUEUES]Queue;
 }
 
-device: VulkanDevice;
+device: Device;
 
 vk_check :: (result: VkResult) {
     if (result != .SUCCESS) {
@@ -88,21 +123,58 @@ load_vulkan_library :: () {
     vk_load_global_functions(cast(*void)vkGetInstanceProcAddr);
 }
 
-create_logical_device :: (physical_device: VkPhysicalDevice, validation_layers_enabled: bool = true) {
+create_logical_device :: (phys_device: VkPhysicalDevice) -> VkDevice {
     // just graphics queue for now
     // assume we can create a graphics queue based on select_physical_device.
+    queue_families: [..]VkQueueFamilyProperties;
+    defer array_free(queue_families);
 
+    queue_family_count: u32;
+    vkGetPhysicalDeviceQueueFamilyProperties(phys_device, *queue_family_count, null);
+    array_resize(*queue_families, queue_family_count);
+    vkGetPhysicalDeviceQueueFamilyProperties(phys_device, *queue_family_count, queue_families.data);
+
+    selected_queue_idx := -1;
+
+    for family, i: queue_families {
+        if family.queueFlags & (.GRAPHICS | .COMPUTE | .TRANSFER) {
+            selected_queue_idx = i;
+            break;
+        }
+    }
+
+    if selected_queue_idx == -1 {
+        print("Failed to find a suitable queue family.\n");
+        return null;
+    }
+
+    queuePriority: float32 = 1.0;
     queue_cinfo := VkDeviceQueueCreateInfo.{
-        flags=0,
-        queueFamilyIndex=0,
+        queueFamilyIndex=xx selected_queue_idx,
+        queueCount=1,
+        pQueuePriorities=*queuePriority,
     };
 
     queues : []VkDeviceQueueCreateInfo = .[queue_cinfo];
 
+    enabled_extensions : []*u8 = .[
+        VK_KHR_SURFACE_EXTENSION_NAME,
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        VK_KHR_SPIRV_1_4_EXTENSION_NAME,
+        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+    ];
+
     cinfo := VkDeviceCreateInfo.{
         queueCreateInfoCount=1,
         pQueueCreateInfos=queues.data,
+        ppEnabledExtensionNames=enabled_extensions.data,
+        enabledExtensionCount= 3,
     };
+
+    device: VkDevice;
+    vk_check(vkCreateDevice(phys_device, *cinfo, null, *device));
+    print("created device\n");
+    return device;
 }
 
 select_physical_device :: (min_vulkan_api_version: u32, required_device_extensions: []string) -> VkPhysicalDevice {
@@ -181,6 +253,8 @@ select_physical_device :: (min_vulkan_api_version: u32, required_device_extensio
 }
 
 #scope_file 
+
+VALIDATION_LAYERS_ENABLED :: true;
 
 #import "Reflection";
 #import "Vulkan";
