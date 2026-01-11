@@ -1,10 +1,10 @@
-gfx_init :: (app_name: string, window: *Window) -> bool {
-    result := init_device(app_name);
+gfx_init :: (app_name: string, window: *SDL_Window) -> bool {
+    result := Device.init(app_name, window);
     return result;
 }
 
-#if USE_VULKAN {
-    GFX_SDL_EXTRA_INIT_FLAGS :: SDL_WindowFlags.VULKAN;
+gfx_shutdown :: () {
+    Device.shutdown();
 }
 
 #scope_file
@@ -14,7 +14,7 @@ gfx_init :: (app_name: string, window: *Window) -> bool {
 USE_VULKAN :: true;
 
 #if USE_VULKAN {
-    #import,file "vulkan/module.jai";
+    Device :: #import,file "vulkan/module.jai";
 } else {
     #assert false, "Only Vulkan is supported currently.";
 }

@@ -3,4 +3,4 @@
 	url = https://github.com/tonadr1022/vulkan-jai-binding.git
 [submodule "modules/SDL"]
 	path = modules/SDL
-	url = https://github.com/overlord-systems/jai-sdl3.git
+	url = git@github.com:tonadr1022/jai-sdl3.git

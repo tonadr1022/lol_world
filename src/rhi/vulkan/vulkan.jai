@@ -1,31 +1,38 @@
-#scope_module
+VALIDATION_LAYERS_ENABLED :: true; 
 
-#scope_export
+min_vulkan_api_version :: VK_API_VERSION_1_4;
 
-init_device :: (app_name: string) -> bool {
-    min_vulkan_api_version := VK_API_VERSION_1_4;
-    required_device_extensions :: string.[
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-        VK_KHR_SPIRV_1_4_EXTENSION_NAME,
-        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
-        VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME
-    ];
+required_device_extensions :: string.[
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+    VK_KHR_SPIRV_1_4_EXTENSION_NAME,
+    VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+    VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME
+];
 
+Queue :: struct {
+    queueFamilyIndex: u32;
+    queue: VkQueue;
+}
+
+Ctx :: struct {
+    instance: VkInstance;
+    physical_device: VkPhysicalDevice;
+    device: VkDevice;
+    surface: VkSurfaceKHR;
+
+    MAX_QUEUES :: 1; // only graphics for now
+
+    queues: [MAX_QUEUES]Queue;
+}
+
+device: Ctx;
+
+init :: (app_name: string, window: *SDL_Window) -> bool {
     load_vulkan_library();
 
-    app_info := VkApplicationInfo.{
-        pApplicationName=to_c_string(app_name),
-        applicationVersion=VK_MAKE_VERSION(1, 0, 0),
-        pEngineName="no_engine",
-        engineVersion=VK_MAKE_VERSION(1, 0, 0),
-        apiVersion=min_vulkan_api_version,
-    };
-
-    enabled_layers : [10]*u8;
-    enabled_layer_count := 0;
+    enabled_layers: [..]*u8;
     if VALIDATION_LAYERS_ENABLED {
-        enabled_layers[enabled_layer_count] = "VK_LAYER_KHRONOS_validation";
-        enabled_layer_count += 1;
+        array_add(*enabled_layers, "VK_LAYER_KHRONOS_validation");
     }
 
     available_layer_count: u32;
@@ -34,7 +41,7 @@ init_device :: (app_name: string) -> bool {
     array_resize(*layers, available_layer_count);
     vkEnumerateInstanceLayerProperties(*available_layer_count, layers.data);
 
-    for i: 0..enabled_layer_count-1 {
+    for i: 0..enabled_layers.count-1 {
         enabled_layer_name := enabled_layers[i];
         found := false;
         for layer: layers {
@@ -57,9 +64,16 @@ init_device :: (app_name: string) -> bool {
         print("SDL Vulkan Extension: %\n", to_string(sdl_vulkan_extensions[it]));
     }
 
+    app_info := VkApplicationInfo.{
+        pApplicationName=to_c_string(app_name),
+        applicationVersion=VK_MAKE_VERSION(1, 0, 0),
+        pEngineName="no_engine",
+        engineVersion=VK_MAKE_VERSION(1, 0, 0),
+        apiVersion=min_vulkan_api_version,
+    };
     inst_info := VkInstanceCreateInfo.{
         pApplicationInfo=*app_info,
-        enabledLayerCount=xx enabled_layer_count,
+        enabledLayerCount=xx enabled_layers.count,
         ppEnabledLayerNames=enabled_layers.data,
         enabledExtensionCount=sdl_vulkan_extension_count,
         ppEnabledExtensionNames=sdl_vulkan_extensions,
@@ -69,41 +83,63 @@ init_device :: (app_name: string) -> bool {
     vk_load_instance_functions(device.instance);
 
 
-    selected_phys_device := select_physical_device(min_vulkan_api_version, required_device_extensions);
-    if !selected_phys_device {
+    device.physical_device = select_physical_device(min_vulkan_api_version, required_device_extensions);
+    if !device.physical_device {
         print("failed to find a suitable GPU.\n");
         return false;
     }
-    device.physical_device = selected_phys_device;
 
-    props: VkPhysicalDeviceProperties;
-    vkGetPhysicalDeviceProperties(device.physical_device, *props);
+    SDL_Vulkan_CreateSurface(window, device.instance, null, *device.surface);
+    if !device.surface {
+        print("Failed to create Vulkan surface: %\n", to_string(SDL_GetError()));
+        return false;
+    }
 
-    device_name := to_string(props.deviceName.data);
-    print("Selected Physical Device: %\n", device_name);
-    print("Device Type: %\n", props.deviceType);
+    print_physical_device_info(device.physical_device);
 
-    create_logical_device_result := create_logical_device(device.physical_device);
+    device.device = create_logical_device(device.physical_device);
+    if !device.device {
+        print("Failed to create logical device.\n");
+        return false;
+    }
+
+    vk_load_device_functions(device.device);
+
+    assert(vkGetDeviceQueue != null);
+    vkGetDeviceQueue(device.device, device.queues[0].queueFamilyIndex, 0, *device.queues[0].queue);
+    if !device.queues[0].queue {
+        print("Failed to get device queue.\n");
+        return false;
+    }
+
     return true;
+}
+
+print_physical_device_info :: (phys_device: VkPhysicalDevice) {
+    props: VkPhysicalDeviceProperties;
+    vkGetPhysicalDeviceProperties(phys_device, *props);
+    device_name := to_string(props.deviceName.data);
+    print("Physical Device: %\n", device_name);
+    print("Device Type: %\n", props.deviceType);
+}
+
+shutdown :: () {
+    if device.device {
+        vkDestroyDevice(device.device, null);
+        device.device = null;
+    }
+    if device.surface {
+        vkDestroySurfaceKHR(device.instance, device.surface, null);
+        device.surface = null;
+    }
+    if device.instance {
+        vkDestroyInstance(device.instance, null);
+        device.instance = null;
+    }
 }
 
 #scope_file
 
-Queue :: struct {
-    queueFamilyIndex: u32;
-}
-
-Device :: struct {
-    instance: VkInstance;
-    physical_device: VkPhysicalDevice;
-    device: VkDevice;
-
-    MAX_QUEUES :: 1; // only graphics for now
-
-    queues: [MAX_QUEUES]Queue;
-}
-
-device: Device;
 
 vk_check :: (result: VkResult) {
     if (result != .SUCCESS) {
@@ -120,7 +156,7 @@ load_vulkan_library :: () -> bool {
     }
     // TODO: unload the library on exit?
     if !SDL_Vulkan_LoadLibrary("libvulkan.so.1") && !SDL_Vulkan_LoadLibrary("libvulkan.so") {
-        print("Failed to load Vulkan library via SDL: %\n", to_string(SDL_GetError()));
+        print("Failed to load Vulkan library: %\n", to_string(SDL_GetError()));
         return false;
     }
     vkGetInstanceProcAddr := SDL_Vulkan_GetVkGetInstanceProcAddr();
@@ -179,9 +215,7 @@ create_logical_device :: (phys_device: VkPhysicalDevice) -> VkDevice {
     };
 
     device: VkDevice;
-    print("creating device\n");
     vk_check(vkCreateDevice(phys_device, *cinfo, null, *device));
-    print("created device\n");
     return device;
 }
 
@@ -261,8 +295,6 @@ select_physical_device :: (min_vulkan_api_version: u32, required_device_extensio
 }
 
 #scope_file
-
-VALIDATION_LAYERS_ENABLED :: true;
 
 #import "Reflection";
 #import "Vulkan";
