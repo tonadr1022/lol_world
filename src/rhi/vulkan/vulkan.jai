@@ -1,4 +1,5 @@
 VALIDATION_LAYERS_ENABLED :: true; 
+FRAMES_IN_FLIGHT :: 2;
 
 min_vulkan_api_version :: VK_API_VERSION_1_4;
 
@@ -19,6 +20,12 @@ Ctx :: struct {
     physical_device: VkPhysicalDevice;
     device: VkDevice;
     surface: VkSurfaceKHR;
+
+    PerFrame :: struct {
+        command_pool: VkCommandPool;
+    }
+
+    per_frames: [FRAMES_IN_FLIGHT]PerFrame;
 
     MAX_QUEUES :: 1; // only graphics for now
 
@@ -106,10 +113,19 @@ init :: (app_name: string, window: *SDL_Window) -> bool {
     vk_load_device_functions(device.device);
 
     assert(vkGetDeviceQueue != null);
-    vkGetDeviceQueue(device.device, device.queues[0].queueFamilyIndex, 0, *device.queues[0].queue);
-    if !device.queues[0].queue {
+    graphics_queue := *device.queues[0];
+    vkGetDeviceQueue(device.device, graphics_queue.queueFamilyIndex, 0, *graphics_queue.queue);
+    if !graphics_queue.queue {
         print("Failed to get device queue.\n");
         return false;
+    }
+
+    for * per_frame: device.per_frames {
+        cinfo := VkCommandPoolCreateInfo.{
+            queueFamilyIndex=graphics_queue.queueFamilyIndex,
+            flags=.RESET_COMMAND_BUFFER,
+        };
+        vk_check(vkCreateCommandPool(device.device, *cinfo, null, *per_frame.command_pool));
     }
 
     return true;
