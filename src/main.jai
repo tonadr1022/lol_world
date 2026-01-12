@@ -32,11 +32,13 @@ run :: () {
                 should_quit = true;
             }
         }
+        gfx_render_frame();
         SDL_Delay(16);
     }
 }
 
 shutdown :: () {
+   gfx_shutdown();
    SDL_DestroyWindow(window);
    SDL_Quit();
 }

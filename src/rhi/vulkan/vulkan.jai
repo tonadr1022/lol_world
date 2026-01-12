@@ -1,41 +1,67 @@
 VALIDATION_LAYERS_ENABLED :: true; 
+ABORT_ON_DEBUG_CALLBACK :: true;
 FRAMES_IN_FLIGHT :: 2;
 
 min_vulkan_api_version :: VK_API_VERSION_1_4;
 
-required_device_extensions :: string.[
+required_device_extensions :: *u8.[
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
     VK_KHR_SPIRV_1_4_EXTENSION_NAME,
-    VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
-    VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME
+    VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME
 ];
 
-Queue :: struct {
-    queueFamilyIndex: u32;
-    queue: VkQueue;
+device: Device;
+
+get_device :: () -> *Device {
+    return *device;
 }
 
-Ctx :: struct {
-    instance: VkInstance;
-    physical_device: VkPhysicalDevice;
-    device: VkDevice;
-    surface: VkSurfaceKHR;
+begin_frame :: () {
 
-    PerFrame :: struct {
-        command_pool: VkCommandPool;
+}
+
+end_frame :: () {
+    {
+        using device;
+        curr_frame += 1;
+        curr_frame_in_flight = curr_frame % FRAMES_IN_FLIGHT;
     }
-
-    per_frames: [FRAMES_IN_FLIGHT]PerFrame;
-
-    MAX_QUEUES :: 1; // only graphics for now
-
-    queues: [MAX_QUEUES]Queue;
 }
 
-device: Ctx;
+begin_main_cmd_buf :: () {
+    {
+        using device;
+        binfo := VkCommandBufferBeginInfo.{};
+        cmd_buf := per_frames[curr_frame_in_flight].cmd_buf;
+        vk_check(vkResetCommandBuffer(cmd_buf, 0));
+        vk_check(vkBeginCommandBuffer(cmd_buf, *binfo));
+    }
+}
+
+end_main_cmd_buf :: () {
+    using device;
+    cmd_buf := per_frames[curr_frame_in_flight].cmd_buf;
+    vk_check(vkEndCommandBuffer(cmd_buf));
+}
 
 init :: (app_name: string, window: *SDL_Window) -> bool {
-    load_vulkan_library();
+    // TODO: this is incredibly jank.
+    #if OS != .LINUX {
+        print("Unsupported OS\n");
+        #assert false;
+    }
+
+    if !SDL_Vulkan_LoadLibrary("libvulkan.so.1") && !SDL_Vulkan_LoadLibrary("libvulkan.so") {
+        print("Failed to load Vulkan library: %\n", to_string(SDL_GetError()));
+        return false;
+    }
+    vkGetInstanceProcAddr := SDL_Vulkan_GetVkGetInstanceProcAddr();
+    if !vkGetInstanceProcAddr {
+        print(to_string(SDL_GetError()));
+        return false;
+    }
+
+    vk_load_global_functions(cast(*void)vkGetInstanceProcAddr);
 
     enabled_layers: [..]*u8;
     if VALIDATION_LAYERS_ENABLED {
@@ -67,8 +93,15 @@ init :: (app_name: string, window: *SDL_Window) -> bool {
     SDL_Vulkan_GetInstanceExtensions(*sdl_vulkan_extension_count);
     assert(sdl_vulkan_extension_count <= 32);
     sdl_vulkan_extensions := SDL_Vulkan_GetInstanceExtensions(*sdl_vulkan_extension_count);
+    instance_extensions: [..]*u8;
+    defer array_free(instance_extensions);
+
+    array_reserve(*instance_extensions, sdl_vulkan_extension_count + 1);
     for 0..sdl_vulkan_extension_count-1 {
-        print("SDL Vulkan Extension: %\n", to_string(sdl_vulkan_extensions[it]));
+        array_add(*instance_extensions, sdl_vulkan_extensions[it]);
+    }
+    if VALIDATION_LAYERS_ENABLED {
+        array_add(*instance_extensions, VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
 
     app_info := VkApplicationInfo.{
@@ -82,8 +115,8 @@ init :: (app_name: string, window: *SDL_Window) -> bool {
         pApplicationInfo=*app_info,
         enabledLayerCount=xx enabled_layers.count,
         ppEnabledLayerNames=enabled_layers.data,
-        enabledExtensionCount=sdl_vulkan_extension_count,
-        ppEnabledExtensionNames=sdl_vulkan_extensions,
+        enabledExtensionCount=xx instance_extensions.count,
+        ppEnabledExtensionNames=instance_extensions.data,
     };
 
     vk_check(vkCreateInstance(*inst_info, null, *device.instance));
@@ -102,7 +135,11 @@ init :: (app_name: string, window: *SDL_Window) -> bool {
         return false;
     }
 
-    print_physical_device_info(device.physical_device);
+    props: VkPhysicalDeviceProperties;
+    vkGetPhysicalDeviceProperties(device.physical_device, *props);
+    device_name := to_string(props.deviceName.data);
+    print("Physical Device: %\n", device_name);
+    print("Device Type: %\n", props.deviceType);
 
     device.device = create_logical_device(device.physical_device);
     if !device.device {
@@ -111,6 +148,20 @@ init :: (app_name: string, window: *SDL_Window) -> bool {
     }
 
     vk_load_device_functions(device.device);
+
+    if VALIDATION_LAYERS_ENABLED {
+        debug_utils_cinfo := VkDebugUtilsMessengerCreateInfoEXT.{
+            messageSeverity=.WARNING | .ERROR,
+            messageType=.GENERAL | .VALIDATION | .PERFORMANCE,
+            pfnUserCallback=debug_callback,
+            pUserData=cast(*void)*context,
+        };
+        assert(vkCreateDebugUtilsMessengerEXT != null);
+        vk_check(vkCreateDebugUtilsMessengerEXT(device.instance, *debug_utils_cinfo, null, *device.debug_messenger));
+
+
+        print("Vulkan: Validation layers enabled.\n");
+    }
 
     assert(vkGetDeviceQueue != null);
     graphics_queue := *device.queues[0];
@@ -126,66 +177,70 @@ init :: (app_name: string, window: *SDL_Window) -> bool {
             flags=.RESET_COMMAND_BUFFER,
         };
         vk_check(vkCreateCommandPool(device.device, *cinfo, null, *per_frame.command_pool));
+        cmd_buf_cinfo := VkCommandBufferAllocateInfo.{
+            commandPool=per_frame.command_pool,
+            level=.PRIMARY,
+            commandBufferCount=1,
+        };
+        vk_check(vkAllocateCommandBuffers(device.device, *cmd_buf_cinfo, *per_frame.cmd_buf));
+    }
+
+
+    x, y: s32;
+    SDL_GetWindowSizeInPixels(window, *x, *y);
+    if !swapchain_init(*device, xx x, xx y, true) {
+        return false;
     }
 
     return true;
 }
 
-print_physical_device_info :: (phys_device: VkPhysicalDevice) {
-    props: VkPhysicalDeviceProperties;
-    vkGetPhysicalDeviceProperties(phys_device, *props);
-    device_name := to_string(props.deviceName.data);
-    print("Physical Device: %\n", device_name);
-    print("Device Type: %\n", props.deviceType);
-}
-
 shutdown :: () {
-    if device.device {
-        vkDestroyDevice(device.device, null);
-        device.device = null;
+    using device;
+
+    for * per_frames {
+        if it.cmd_buf {
+            vkFreeCommandBuffers(device, it.command_pool, 1, *it.cmd_buf);
+            it.cmd_buf = null;
+        }
+        vkDestroyCommandPool(device, it.command_pool, null);
     }
-    if device.surface {
-        vkDestroySurfaceKHR(device.instance, device.surface, null);
-        device.surface = null;
+
+    vkDestroySwapchainKHR(device, swapchain.swapchain, null);
+
+    if device {
+        vkDestroyDevice(device, null);
+        device = null;
     }
-    if device.instance {
-        vkDestroyInstance(device.instance, null);
-        device.instance = null;
+    if surface {
+        vkDestroySurfaceKHR(instance, surface, null);
+        surface = null;
+    }
+    if (debug_messenger) {
+        vkDestroyDebugUtilsMessengerEXT(instance, debug_messenger, null);
+    }
+    if instance {
+        vkDestroyInstance(instance, null);
+        instance = null;
     }
 }
 
 #scope_file
 
+debug_callback :: (messageSeverity: VkDebugUtilsMessageSeverityFlagBitsEXT, messageTypes: VkDebugUtilsMessageTypeFlagsEXT, pCallbackData: *VkDebugUtilsMessengerCallbackDataEXT, pUserData: *void) -> VkBool32 #c_call {
+    ctx := cast(*#Context, pUserData).*;
+    push_context,defer_pop ctx;
 
-vk_check :: (result: VkResult) {
-    if (result != .SUCCESS) {
-        print("Vulkan error: %\n", enum_value_to_name(result));
-        exit(1);
-    }
-}
+    print("%\n", to_string(pCallbackData.pMessage));
 
-load_vulkan_library :: () -> bool {
-    // TODO: this is incredibly jank.
-    #if OS != .LINUX {
-        print("Unsupported OS\n");
-        #assert false;
-    }
-    // TODO: unload the library on exit?
-    if !SDL_Vulkan_LoadLibrary("libvulkan.so.1") && !SDL_Vulkan_LoadLibrary("libvulkan.so") {
-        print("Failed to load Vulkan library: %\n", to_string(SDL_GetError()));
-        return false;
-    }
-    vkGetInstanceProcAddr := SDL_Vulkan_GetVkGetInstanceProcAddr();
+    #if ABORT_ON_DEBUG_CALLBACK exit(1);
 
-    if !vkGetInstanceProcAddr {
-        print(to_string(SDL_GetError()));
-        return true;
-    }
-    vk_load_global_functions(cast(*void)vkGetInstanceProcAddr);
-    return true;
+    return VK_FALSE;
 }
 
 create_logical_device :: (phys_device: VkPhysicalDevice) -> VkDevice {
+    // TODO: make sure presentation is supported on the graphics queue. 99% of time it is
+
     // just graphics queue for now
     // assume we can create a graphics queue based on select_physical_device.
     queue_families: [..]VkQueueFamilyProperties;
@@ -219,15 +274,11 @@ create_logical_device :: (phys_device: VkPhysicalDevice) -> VkDevice {
 
     queues : []VkDeviceQueueCreateInfo = .[queue_cinfo];
 
-    enabled_extensions : []*u8 = .[
-        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
-    ];
-
     cinfo := VkDeviceCreateInfo.{
         queueCreateInfoCount=1,
         pQueueCreateInfos=queues.data,
-        ppEnabledExtensionNames=enabled_extensions.data,
-        enabledExtensionCount=1,
+        ppEnabledExtensionNames=required_device_extensions.data,
+        enabledExtensionCount=required_device_extensions.count,
     };
 
     device: VkDevice;
@@ -235,7 +286,7 @@ create_logical_device :: (phys_device: VkPhysicalDevice) -> VkDevice {
     return device;
 }
 
-select_physical_device :: (min_vulkan_api_version: u32, required_device_extensions: []string) -> VkPhysicalDevice {
+select_physical_device :: (min_vulkan_api_version: u32, required_device_extensions: []*u8) -> VkPhysicalDevice {
     queue_families: [..]VkQueueFamilyProperties;
     defer array_free(queue_families);
 
@@ -281,7 +332,7 @@ select_physical_device :: (min_vulkan_api_version: u32, required_device_extensio
         for req: required_device_extensions {
             found := false;
             for avail: available_extensions {
-                if to_string(avail.extensionName.data) == req {
+                if to_string(avail.extensionName.data) == to_string(req) {
                     found = true;
                     break;
                 }
@@ -312,8 +363,13 @@ select_physical_device :: (min_vulkan_api_version: u32, required_device_extensio
 
 #scope_file
 
-#import "Reflection";
+#load "util.jai";
+#load "swapchain.jai";
+#load "device.jai";
+
+#import "Compiler";
 #import "Vulkan";
 #import "POSIX";
 #import "Basic";
 #import "SDL";
+
