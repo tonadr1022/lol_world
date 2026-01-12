@@ -45,6 +45,6 @@ shutdown :: () {
 
 #scope_file
 
-#import,file "rhi/gfx.jai";
+#load "graphics/gfx.jai";
 #import "Basic";
 #import "SDL";

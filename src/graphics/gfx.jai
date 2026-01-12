@@ -11,7 +11,6 @@ renderer: Renderer;
 gfx_init :: (app_name: string, window: *SDL_Window) -> bool {
     renderer.window = window;
     result := BE.init(app_name, window);
-
     return result;
 }
 

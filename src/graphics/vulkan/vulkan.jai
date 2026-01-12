@@ -188,7 +188,7 @@ init :: (app_name: string, window: *SDL_Window) -> bool {
 
     x, y: s32;
     SDL_GetWindowSizeInPixels(window, *x, *y);
-    if !swapchain_init(*device, xx x, xx y, true) {
+    if !swapchain_init(xx x, xx y, true) {
         return false;
     }
 
@@ -206,7 +206,7 @@ shutdown :: () {
         vkDestroyCommandPool(device, it.command_pool, null);
     }
 
-    vkDestroySwapchainKHR(device, swapchain.swapchain, null);
+    swapchain_destroy(*swapchain);
 
     if device {
         vkDestroyDevice(device, null);
@@ -225,7 +225,17 @@ shutdown :: () {
     }
 }
 
+#scope_module
+
+vk_check :: (result: VkResult) {
+    if (result != .SUCCESS) {
+        print("Vulkan error: %\n", enum_value_to_name(result));
+        exit(1);
+    }
+}
+
 #scope_file
+
 
 debug_callback :: (messageSeverity: VkDebugUtilsMessageSeverityFlagBitsEXT, messageTypes: VkDebugUtilsMessageTypeFlagsEXT, pCallbackData: *VkDebugUtilsMessengerCallbackDataEXT, pUserData: *void) -> VkBool32 #c_call {
     ctx := cast(*#Context, pUserData).*;
@@ -363,7 +373,7 @@ select_physical_device :: (min_vulkan_api_version: u32, required_device_extensio
 
 #scope_file
 
-#load "util.jai";
+#load "image.jai";
 #load "swapchain.jai";
 #load "device.jai";
 
@@ -372,4 +382,5 @@ select_physical_device :: (min_vulkan_api_version: u32, required_device_extensio
 #import "POSIX";
 #import "Basic";
 #import "SDL";
+#import "Reflection";
 

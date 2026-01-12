@@ -2,7 +2,8 @@ Swapchain :: struct {
     swapchain: VkSwapchainKHR;
     width, height: u32;
     format: VkFormat;
-    images: [5]VkImage;
+    MAX_IMAGES :: 5;
+    images: [MAX_IMAGES]Image;
     img_cnt: u32;
 }
 
@@ -99,18 +100,31 @@ swapchain_recreate :: (device: *Device, old_swapchain: *Swapchain, curr_width_px
 
     vk_check(vkCreateSwapchainKHR(device.device, *cinfo, null, *new_swap.swapchain));
 
+    vk_imgs: [Swapchain.MAX_IMAGES]VkImage;
     vk_check(vkGetSwapchainImagesKHR(device.device, new_swap.swapchain, *new_swap.img_cnt, null));
-    vk_check(vkGetSwapchainImagesKHR(device.device, new_swap.swapchain, *new_swap.img_cnt, new_swap.images.data));
+    vk_check(vkGetSwapchainImagesKHR(device.device, new_swap.swapchain, *new_swap.img_cnt, vk_imgs.data));
+
+    for 0..new_swap.img_cnt-1 {
+        img := *new_swap.images[it];
+        image_create(img, vk_imgs[it], vk_format_to_format(new_swap.format), width, height, is_swapchain_img=true);
+    }
 
     return true;
 }
 
-swapchain_init :: (device: *Device, curr_framebuffer_width_px: u32, curr_framebuffer_height_px: u32, vsync_enabled: bool) -> bool {
+swapchain_init :: (curr_framebuffer_width_px: u32, curr_framebuffer_height_px: u32, vsync_enabled: bool) -> bool {
     old_swapchain := device.swapchain;
-    return swapchain_recreate(device, *old_swapchain, curr_framebuffer_width_px, curr_framebuffer_height_px, vsync_enabled);
+    return swapchain_recreate(*device, *old_swapchain, curr_framebuffer_width_px, curr_framebuffer_height_px, vsync_enabled);
+}
+
+swapchain_destroy :: (swapchain: *Swapchain) {
+    for 0..swapchain.img_cnt-1 {
+        img := *swapchain.images[it];
+        image_destroy(img);
+    }
+    vkDestroySwapchainKHR(device.device, swapchain.swapchain, null);
 }
 
 #scope_file
 
 #import "Math";
-#import "Vulkan";
