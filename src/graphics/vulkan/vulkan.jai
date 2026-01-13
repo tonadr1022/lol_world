@@ -16,6 +16,10 @@ get_device :: () -> *Device {
     return *device;
 }
 
+get_swapchain :: () -> *Swapchain {
+    return *device.swapchain;
+}
+
 begin_frame :: () {
 
 }
@@ -234,6 +238,11 @@ vk_check :: (result: VkResult) {
     }
 }
 
+device_get_perframe :: () -> *Device.PerFrame {
+    using device;
+    return *per_frames[curr_frame_in_flight];
+}
+
 #scope_file
 
 
@@ -284,8 +293,17 @@ create_logical_device :: (phys_device: VkPhysicalDevice) -> VkDevice {
 
     queues : []VkDeviceQueueCreateInfo = .[queue_cinfo];
 
+    features13 := VkPhysicalDeviceVulkan13Features.{
+        dynamicRendering=1,
+    };
+
+    features2 := VkPhysicalDeviceFeatures2.{
+        pNext=*features13,
+    };
+
     cinfo := VkDeviceCreateInfo.{
         queueCreateInfoCount=1,
+        pNext=*features2,
         pQueueCreateInfos=queues.data,
         ppEnabledExtensionNames=required_device_extensions.data,
         enabledExtensionCount=required_device_extensions.count,

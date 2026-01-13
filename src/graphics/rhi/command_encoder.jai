@@ -1,0 +1,3 @@
+CmdEncoder :: struct {
+
+}
